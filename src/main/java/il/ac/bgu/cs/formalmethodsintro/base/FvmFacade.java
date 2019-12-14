@@ -9,6 +9,7 @@ import il.ac.bgu.cs.formalmethodsintro.base.channelsystem.ChannelSystem;
 import il.ac.bgu.cs.formalmethodsintro.base.circuits.Circuit;
 import il.ac.bgu.cs.formalmethodsintro.base.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.ltl.LTL;
+import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ActionDef;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ConditionDef;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.PGTransition;
@@ -18,12 +19,13 @@ import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TSTransition;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TransitionSystem;
 import il.ac.bgu.cs.formalmethodsintro.base.util.Pair;
 import il.ac.bgu.cs.formalmethodsintro.base.verification.VerificationResult;
+import org.antlr.v4.runtime.ParserRuleContext;
+import static il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaFileReader.pareseNanoPromelaString;
 
 /**
  * Interface for the entry point class to the HW in this class. Our
  * client/testing code interfaces with the student solutions through this
  * interface only. <br>
- * More about facade: {@linkplain http://www.vincehuston.org/dp/facade.html}.
  */
 public class FvmFacade {
 
@@ -54,6 +56,8 @@ public class FvmFacade {
      * @return {@code true} iff the action is deterministic.
      */
     public <S, A, P> boolean isActionDeterministic(TransitionSystem<S, A, P> ts) {
+        if (ts.getInitialStates().size() > 1)
+            return false;
         for (TSTransition trans :  ts.getTransitions()) {
             int counter = 0;
             for (TSTransition transToCompare :  ts.getTransitions()) {
@@ -77,6 +81,8 @@ public class FvmFacade {
      * @return {@code true} iff the action is ap-deterministic.
      */
     public <S, A, P> boolean isAPDeterministic(TransitionSystem<S, A, P> ts) {
+        if (ts.getInitialStates().size() > 1)
+            return false;
         for (TSTransition trans :  ts.getTransitions()) {
             int counter = 0;
             for (TSTransition transToCompare :  ts.getTransitions()) {
@@ -101,17 +107,7 @@ public class FvmFacade {
      * @return {@code true} iff {@code e} is an execution of {@code ts}.
      */
     public <S, A, P> boolean isExecution(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        AlternatingSequence<S,A> nextSeq = e;
-        while(!e.isEmpty()){
-            S s1 = nextSeq.head();
-            A a = nextSeq.tail().head();
-            S s2 = nextSeq.tail().tail().head();
-            if(!ts.getTransitions().contains(new TSTransition<>(s1,a,s2))){
-                return false;
-            }
-            nextSeq = nextSeq.tail().tail();
-        }
-        return true;
+        return isExecutionFragment(ts, e) && isInitialExecutionFragment(ts, e) && isMaximalExecutionFragment(ts, e);
     }
 
     /**
@@ -128,7 +124,23 @@ public class FvmFacade {
      * {@code ts}.
      */
     public <S, A, P> boolean isExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new java.lang.UnsupportedOperationException();
+        AlternatingSequence<S,A> nextSeq = e;
+        if (!e.isEmpty() && !ts.getStates().contains(e.head()))
+            return false;
+        while(!e.isEmpty()){
+            S s1 = nextSeq.head();
+            if (nextSeq.tail().isEmpty())
+                break;
+            A a = nextSeq.tail().head();
+            if (nextSeq.tail().tail().isEmpty())
+                return false;
+            S s2 = nextSeq.tail().tail().head();
+            if(!ts.getTransitions().contains(new TSTransition<>(s1,a,s2))){
+                return false;
+            }
+            nextSeq = nextSeq.tail().tail();
+        }
+        return true;
     }
 
     /**
@@ -145,7 +157,13 @@ public class FvmFacade {
      * {@code ts}.
      */
     public <S, A, P> boolean isInitialExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new java.lang.UnsupportedOperationException();
+        if (!e.isEmpty()){
+            if (ts.getInitialStates().contains(e.head()) && isExecutionFragment(ts, e))
+                return true;
+            else
+                return false;
+        }
+        return true;
     }
 
     /**
@@ -161,7 +179,13 @@ public class FvmFacade {
      * @return {@code true} iff {@code e} is a maximal fragment of {@code ts}.
      */
     public <S, A, P> boolean isMaximalExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
-        throw new java.lang.UnsupportedOperationException();
+        if (!e.isEmpty()){
+            if (isExecutionFragment(ts, e) && post(ts, e.last()).isEmpty())
+                return true;
+            else
+                return false;
+        }
+        return true;
     }
 
     /**
@@ -175,7 +199,8 @@ public class FvmFacade {
      * @throws StateNotFoundException if {@code s} is not a state of {@code ts}.
      */
     public <S, A> boolean isStateTerminal(TransitionSystem<S, A, ?> ts, S s) {
-        throw new java.lang.UnsupportedOperationException();
+        Set<S> sPost = post(ts, s);
+        return sPost.isEmpty();
     }
 
     /**
@@ -358,8 +383,10 @@ public class FvmFacade {
     public <S, A> Set<S> reach(TransitionSystem<S, A, ?> ts) {
         Set<S> alreadyChecked = new HashSet<>();
         for(S s0 : ts.getInitialStates()){
-            if(!alreadyChecked.contains(s0))
-                reachExcept(ts,alreadyChecked, s0);
+            if(!alreadyChecked.contains(s0)) {
+                alreadyChecked.add(s0);
+                reachExcept(ts, alreadyChecked, s0);
+            }
         }
         return alreadyChecked;
     }
@@ -726,7 +753,38 @@ public class FvmFacade {
      * @throws Exception If the code is invalid.
      */
     public ProgramGraph<String, String> programGraphFromNanoPromelaString(String nanopromela) throws Exception {
-        throw new java.lang.UnsupportedOperationException();
+        NanoPromelaParser.StmtContext tree = pareseNanoPromelaString(nanopromela);
+        return parseTree(tree);
+    }
+
+    private ProgramGraph<String, String> parseTree (NanoPromelaParser.StmtContext tree) throws Exception{
+        ParserRuleContext t = null;
+        if (tree.ifstmt() != null) {
+            t = tree.ifstmt();
+        }
+        else if (tree.assstmt() != null){
+            t = tree.assstmt();
+        }
+        else if (tree.atomicstmt() != null){
+            t = tree.atomicstmt();
+        }
+        else if (tree.chanreadstmt() != null){
+            t = tree.chanreadstmt();
+        }
+        else if (tree.chanwritestmt() != null){
+            t = tree.chanwritestmt();
+        }
+        else if (tree.skipstmt() != null){
+            t = tree.skipstmt();
+        }
+        else if(tree.dostmt() != null){
+            t = tree.dostmt();
+        }
+        if (t != null)
+            System.out.println(t.toString());
+        else
+            System.out.println("problem - tree was some other type");
+        return null;
     }
 
     /**

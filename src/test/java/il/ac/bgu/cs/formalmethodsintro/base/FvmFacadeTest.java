@@ -16,6 +16,7 @@ import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ActionDef;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ConditionDef;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.PGTransition;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ProgramGraph;
+import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.AlternatingSequence;
 import il.ac.bgu.cs.formalmethodsintro.base.util.Pair;
 import org.junit.Before;
 import org.junit.Test;
@@ -58,6 +59,33 @@ public class FvmFacadeTest {
         ts = new TransitionSystem<>();
     }
 
+    @Test
+    public void nanoPromela() throws Exception {
+        String filename = "tst1.np";
+        String np = "if :: a == c -> bb := 1\n" +
+                    "   :: a == b -> if :: x != y -> do :: x<3 -> x := x + 1 od fi; y := 9\n" +
+                    "fi";
+        String np2 = "x := 0";
+        String np3 = "x := 0; y:= x + 1";
+        ProgramGraph<String, String> tree = FvmFacade.get().programGraphFromNanoPromelaString(np);
+    }
+
+    @Test(timeout = 2000)
+    public void isStateTerminal() throws Exception {
+        ts.addState(States.S1);
+        ts.addState(States.S2);
+        ts.addState(States.S3);
+        ts.addInitialState(States.S1);
+
+        ts.addTransition(new TSTransition(States.S1,Actions.A1,States.S2));
+        ts.addTransition(new TSTransition(States.S1,Actions.A1,States.S3));
+        ts.addTransition(new TSTransition(States.S2,Actions.A1,States.S1));
+
+        assertFalse(FvmFacade.get().isStateTerminal(ts, States.S1));
+        assertFalse(FvmFacade.get().isStateTerminal(ts, States.S2));
+        assertTrue(FvmFacade.get().isStateTerminal(ts, States.S3));
+    }
+
     @Test(timeout = 2000)
     public void deterministicActionFalse() throws Exception {
         ts.addState(States.S1);
@@ -80,6 +108,8 @@ public class FvmFacadeTest {
         ts.addTransition(new TSTransition(States.S2,Actions.A1,States.S1));
 
         assertTrue(FvmFacade.get().isActionDeterministic(ts));
+        ts.addInitialState(States.S1);
+        assertFalse(FvmFacade.get().isActionDeterministic(ts));
     }
 
     @Test(timeout = 2000)
@@ -109,6 +139,34 @@ public class FvmFacadeTest {
         ts.addToLabel(States.S3, AP.Q);
 
         assertTrue(FvmFacade.get().isAPDeterministic(ts));
+    }
+
+    @Test(timeout = 2000)
+    public void Executions() throws Exception {
+        ts.addState(States.S1);
+        ts.addState(States.S2);
+        ts.addState(States.S3);
+        ts.addInitialState(States.S1);
+
+        ts.addTransition(new TSTransition(States.S1,Actions.A1,States.S2));
+        ts.addTransition(new TSTransition(States.S1,Actions.A1,States.S1));
+        ts.addTransition(new TSTransition(States.S1,Actions.A1,States.S3));
+        ts.addTransition(new TSTransition(States.S2,Actions.A1,States.S1));
+
+        AlternatingSequence e_NotFragment1 = new AlternatingSequence(Arrays.asList(States.S1, States.S2, States.S3), Arrays.asList(Actions.A1, Actions.A1));
+        AlternatingSequence e_NotFragment2 = new AlternatingSequence(Arrays.asList(States.S1, States.S1, States.S2), Arrays.asList(Actions.A2, Actions.A1));
+        AlternatingSequence e_Initial_NotMaximal = new AlternatingSequence(Arrays.asList(States.S1, States.S1, States.S2), Arrays.asList(Actions.A1, Actions.A1));
+        AlternatingSequence e_NotInitial_NotMaximal = new AlternatingSequence(Arrays.asList(States.S2, States.S1, States.S2), Arrays.asList(Actions.A1, Actions.A1));
+        AlternatingSequence e_NotInitial_Maximal = new AlternatingSequence(Arrays.asList(States.S2, States.S1, States.S3), Arrays.asList(Actions.A1, Actions.A1));
+        AlternatingSequence e_Initial_Maximal = new AlternatingSequence(Arrays.asList(States.S1, States.S1, States.S3), Arrays.asList(Actions.A1, Actions.A1));
+        assertFalse(FvmFacade.get().isExecutionFragment(ts, e_NotFragment1));
+        assertFalse(FvmFacade.get().isExecutionFragment(ts, e_NotFragment2));
+        assertTrue(FvmFacade.get().isExecutionFragment(ts, e_NotInitial_NotMaximal));
+        assertFalse(FvmFacade.get().isInitialExecutionFragment(ts, e_NotInitial_NotMaximal));
+        assertTrue(FvmFacade.get().isInitialExecutionFragment(ts, e_Initial_NotMaximal));
+        assertFalse(FvmFacade.get().isMaximalExecutionFragment(ts, e_Initial_NotMaximal));
+        assertTrue(FvmFacade.get().isMaximalExecutionFragment(ts, e_NotInitial_Maximal));
+        assertTrue(FvmFacade.get().isExecution(ts, e_Initial_Maximal));
     }
 
     @Test(timeout = 2000)
