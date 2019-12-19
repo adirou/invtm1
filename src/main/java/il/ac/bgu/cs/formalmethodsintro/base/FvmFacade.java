@@ -11,7 +11,8 @@ import il.ac.bgu.cs.formalmethodsintro.base.circuits.Circuit;
 import il.ac.bgu.cs.formalmethodsintro.base.exceptions.ActionNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.ltl.LTL;
-import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser;
+import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser.StmtContext;
+import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser.OptionContext;
 import il.ac.bgu.cs.formalmethodsintro.base.programgraph.*;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.AlternatingSequence;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TSTransition;
@@ -19,7 +20,8 @@ import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TransitionSystem;
 import il.ac.bgu.cs.formalmethodsintro.base.util.Pair;
 import il.ac.bgu.cs.formalmethodsintro.base.verification.VerificationResult;
 import org.antlr.v4.runtime.ParserRuleContext;
-import static il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaFileReader.pareseNanoPromelaString;
+
+import static il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaFileReader.*;
 
 import java.util.List;
 import java.util.Map;
@@ -985,7 +987,8 @@ public class FvmFacade {
      * @throws Exception If the code is invalid.
      */
     public ProgramGraph<String, String> programGraphFromNanoPromela(String filename) throws Exception {
-        throw new java.lang.UnsupportedOperationException();
+        StmtContext tree = pareseNanoPromelaFile(filename);
+        return programGraphFromNanoPromela(tree);
     }
 
     /**
@@ -996,38 +999,8 @@ public class FvmFacade {
      * @throws Exception If the code is invalid.
      */
     public ProgramGraph<String, String> programGraphFromNanoPromelaString(String nanopromela) throws Exception {
-        NanoPromelaParser.StmtContext tree = pareseNanoPromelaString(nanopromela);
-        return parseTree(tree);
-    }
-
-    private ProgramGraph<String, String> parseTree (NanoPromelaParser.StmtContext tree) throws Exception{
-        ParserRuleContext t = null;
-        if (tree.ifstmt() != null) {
-            t = tree.ifstmt();
-        }
-        else if (tree.assstmt() != null){
-            t = tree.assstmt();
-        }
-        else if (tree.atomicstmt() != null){
-            t = tree.atomicstmt();
-        }
-        else if (tree.chanreadstmt() != null){
-            t = tree.chanreadstmt();
-        }
-        else if (tree.chanwritestmt() != null){
-            t = tree.chanwritestmt();
-        }
-        else if (tree.skipstmt() != null){
-            t = tree.skipstmt();
-        }
-        else if(tree.dostmt() != null){
-            t = tree.dostmt();
-        }
-        if (t != null)
-            System.out.println(t.toString());
-        else
-            System.out.println("problem - tree was some other type");
-        return null;
+        StmtContext tree = pareseNanoPromelaString(nanopromela);
+        return programGraphFromNanoPromela(tree);
     }
 
     /**
@@ -1038,10 +1011,147 @@ public class FvmFacade {
      * @throws Exception If the code is invalid.
      */
     public ProgramGraph<String, String> programGraphFromNanoPromela(InputStream inputStream) throws Exception {
-        throw new java.lang.UnsupportedOperationException();
+        StmtContext tree = parseNanoPromelaStream(inputStream);
+        return programGraphFromNanoPromela(tree);
     }
 
-    //TODO - stop here just ^
+    Set<String> visited = new HashSet<>();
+    final String trueCondition = "true";
+    final String exitLocation = "";
+
+
+    private ProgramGraph<String, String> programGraphFromNanoPromela(StmtContext nanopromela) {
+        ProgramGraph<String, String> pg = createProgramGraph();
+        Map<String, Set<PGTransition<String, String>>> loc2Trans = sub(nanopromela);
+
+        pg.addLocation(nanopromela.getText());
+        pg.setInitial(nanopromela.getText(), true);
+        Queue<String> locations = new LinkedList<>(pg.getLocations());
+
+        while (!locations.isEmpty()) {
+            String location = locations.poll();
+            if (!location.equals(exitLocation))
+                for (PGTransition<String, String> tran : loc2Trans.get(location)) {
+                    if (!pg.getLocations().contains(tran.getTo())) {
+                        locations.add(tran.getTo());
+                    }
+                    pg.addTransition(tran);
+                }
+        }
+        return pg;
+    }
+
+
+    private boolean isBaseStmt(StmtContext stmt){
+        return stmt.assstmt() != null || stmt.chanreadstmt() != null || stmt.chanwritestmt() != null
+                || stmt.atomicstmt() != null || stmt.skipstmt() != null;
+    }
+
+    private void appendTransition(Set<PGTransition<String, String>> transitions, String from, String cond, String action, String to){
+        PGTransition<String, String> pgTransition = new PGTransition<>(from, cond, action, to);
+        transitions.add(pgTransition);
+    }
+
+    private void appendTransitionToMap(Map<String, Set<PGTransition<String, String>>> loc2Trans, String from, String cond, String action, String to){
+        Set<PGTransition<String, String>> transitions = new HashSet<>();
+        if (loc2Trans.containsKey(from))
+            transitions =  loc2Trans.get(from);
+        appendTransition(transitions, from, cond, action, to);
+        loc2Trans.put(from, transitions);
+    }
+
+    private Map<String, Set<PGTransition<String, String>>> sub(StmtContext stmt) {
+        Map<String, Set<PGTransition<String, String>>> loc2Trans;
+
+        if (isBaseStmt(stmt))
+            loc2Trans = addBasicTrans(stmt);
+        else if (stmt.dostmt() != null)
+            loc2Trans = addDoTrans(stmt);
+        else if (stmt.ifstmt() != null)
+            loc2Trans = addIfTrans(stmt);
+        else
+            loc2Trans = addConcatTrans(stmt);
+        return loc2Trans;
+    }
+
+
+    private Map<String, Set<PGTransition<String, String>>> addBasicTrans(StmtContext stmt) {
+        Map<String, Set<PGTransition<String, String>>> loc2Trans = new HashMap<>();
+        Set<PGTransition<String, String>> transitions = new HashSet<>();
+        appendTransition(transitions, stmt.getText(), trueCondition, stmt.getText(), exitLocation);
+        loc2Trans.put(stmt.getText(), transitions);
+        return loc2Trans;
+    }
+
+    private Map<String, Set<PGTransition<String, String>>> addIfTrans(StmtContext stmt) {
+        Map<String, Set<PGTransition<String, String>>> loc2Trans = new HashMap<>();
+        Set<PGTransition<String, String>> transitions = new HashSet<>();
+        for (OptionContext option : stmt.ifstmt().option()) {
+            loc2Trans = sub(option.stmt());
+            for (PGTransition<String, String> tran : loc2Trans.get(option.stmt().getText())) {
+                String cond = mergeConds(option.boolexpr().getText(), tran.getCondition());
+                appendTransition(transitions, stmt.getText(), cond, tran.getAction(), tran.getTo());
+            }
+        }
+        loc2Trans.put(stmt.getText(), transitions);
+        return loc2Trans;
+    }
+
+    private Map<String, Set<PGTransition<String, String>>> addDoTrans(StmtContext stmt ) {
+        List<String> condsList = new LinkedList<>();
+        Map<String, Set<PGTransition<String, String>>> loc2Trans = new HashMap<>();
+        String exitCond = "";
+        for (OptionContext option : stmt.dostmt().option()) {
+            loc2Trans.putAll(sub(option.stmt()));
+            String cond = option.boolexpr().getText();
+            visited =  new HashSet<>();
+            loc2Trans.putAll(getTransRec(loc2Trans, stmt.getText(), option.stmt().getText(), stmt.getText(), cond));
+            String notgi = "!(" + cond + ")";
+            condsList.add(notgi);
+        }
+
+        exitCond = condsList.get(0);
+        for(int i = 1; i < condsList.size(); i++){
+            exitCond += "&&" + condsList.get(i);
+        }
+
+        appendTransitionToMap(loc2Trans, stmt.getText(), exitCond, "", exitLocation);
+        return loc2Trans;
+    }
+
+    private Map<String, Set<PGTransition<String, String>>> addConcatTrans(StmtContext stmt) {
+        Map<String, Set<PGTransition<String, String>>> loc2TransTmp = new HashMap<>();
+        Map<String, Set<PGTransition<String, String>>> loc2Trans = new HashMap<>();
+        StmtContext stmt1 = stmt.stmt(0);
+        StmtContext stmt2 = stmt.stmt(1);
+        loc2TransTmp = sub(stmt1);
+        loc2Trans = sub(stmt2);
+        loc2Trans.putAll(loc2TransTmp);
+        visited =  new HashSet<>();
+        loc2Trans.putAll(getTransRec(loc2Trans, stmt.getText(), stmt1.getText(), stmt2.getText(), ""));
+        return loc2Trans;
+    }
+
+
+
+    private Map<String, Set<PGTransition<String, String>>> getTransRec(Map<String, Set<PGTransition<String, String>>> loc2Trans, String Stmt,
+                        String optionStmt, String toStmt, String cond) {
+        if (!visited.contains(optionStmt)) {
+            visited.add(optionStmt);
+            for (PGTransition<String, String> tran : loc2Trans.get(optionStmt)) {
+                String mergedCond = mergeConds(cond, tran.getCondition());
+                String to = tran.getTo() + ";" + toStmt;
+                if (tran.getTo().equals(exitLocation))
+                    to = toStmt;
+                appendTransitionToMap(loc2Trans, Stmt, mergedCond, tran.getAction(), to);
+
+                if (!tran.getTo().isEmpty())
+                    loc2Trans.putAll(getTransRec(loc2Trans, to, tran.getTo(), toStmt, trueCondition));
+            }
+        }
+        return loc2Trans;
+    }
+
 
     /**
      * Creates a transition system from a transition system and an automaton.
