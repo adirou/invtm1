@@ -20,7 +20,6 @@ import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.AlternatingSequence
 import il.ac.bgu.cs.fvm.examples.AlternatingBitProtocolBuilder;
 
 
-
 public class ChannelSystemTest {
 
 	FvmFacade fvmFacadeImpl = FvmFacade.get();
