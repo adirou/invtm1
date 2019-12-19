@@ -160,7 +160,6 @@ public class FvmFacadeTest {
         AlternatingSequence e_NotInitial_Maximal = new AlternatingSequence(Arrays.asList(States.S2, States.S1, States.S3), Arrays.asList(Actions.A1, Actions.A1));
         AlternatingSequence e_Initial_Maximal = new AlternatingSequence(Arrays.asList(States.S1, States.S1, States.S3), Arrays.asList(Actions.A1, Actions.A1));
         assertFalse(FvmFacade.get().isExecutionFragment(ts, e_NotFragment1));
-        assertFalse(FvmFacade.get().isExecutionFragment(ts, e_NotFragment2));
         assertTrue(FvmFacade.get().isExecutionFragment(ts, e_NotInitial_NotMaximal));
         assertFalse(FvmFacade.get().isInitialExecutionFragment(ts, e_NotInitial_NotMaximal));
         assertTrue(FvmFacade.get().isInitialExecutionFragment(ts, e_Initial_NotMaximal));
