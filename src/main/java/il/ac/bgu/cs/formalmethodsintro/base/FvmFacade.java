@@ -8,6 +8,7 @@ import il.ac.bgu.cs.formalmethodsintro.base.automata.MultiColorAutomaton;
 import il.ac.bgu.cs.formalmethodsintro.base.channelsystem.ChannelSystem;
 import il.ac.bgu.cs.formalmethodsintro.base.channelsystem.ParserBasedInterleavingActDef;
 import il.ac.bgu.cs.formalmethodsintro.base.circuits.Circuit;
+import il.ac.bgu.cs.formalmethodsintro.base.exceptions.ActionNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.ltl.LTL;
 import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser;
@@ -19,6 +20,18 @@ import il.ac.bgu.cs.formalmethodsintro.base.util.Pair;
 import il.ac.bgu.cs.formalmethodsintro.base.verification.VerificationResult;
 import org.antlr.v4.runtime.ParserRuleContext;
 import static il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaFileReader.pareseNanoPromelaString;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ActionDef;
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ConditionDef;
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ParserBasedActDef;
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ParserBasedCondDef;
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ProgramGraph;
+
+import java.util.Collections;
 
 /**
  * Interface for the entry point class to the HW in this class. Our
@@ -59,7 +72,7 @@ public class FvmFacade {
         for (TSTransition trans :  ts.getTransitions()) {
             int counter = 0;
             for (TSTransition transToCompare :  ts.getTransitions()) {
-                if(trans.getFrom() == transToCompare.getFrom() && trans.getAction() == trans.getAction())
+                if(trans.getFrom().equals(transToCompare.getFrom()) && trans.getAction().equals(transToCompare.getAction()))
                     counter++;
                 if(counter > 1)
                     return false;
@@ -84,7 +97,9 @@ public class FvmFacade {
         for (TSTransition trans :  ts.getTransitions()) {
             int counter = 0;
             for (TSTransition transToCompare :  ts.getTransitions()) {
-                if(trans.getFrom() == transToCompare.getFrom() && ts.getLabelingFunction().get(trans.getTo()) == ts.getLabelingFunction().get(transToCompare.getTo()))
+                if(trans.getFrom().equals(transToCompare.getFrom()) &&
+                    ts.getLabelingFunction().getOrDefault(trans.getTo(),new HashSet())
+                        .equals(ts.getLabelingFunction().getOrDefault(transToCompare.getTo(),new HashSet())))
                     counter++;
                 if(counter > 1)
                     return false;
@@ -123,16 +138,23 @@ public class FvmFacade {
      */
     public <S, A, P> boolean isExecutionFragment(TransitionSystem<S, A, P> ts, AlternatingSequence<S, A> e) {
         AlternatingSequence<S,A> nextSeq = e;
-        if (!e.isEmpty() && !ts.getStates().contains(e.head()))
-            return false;
+
         while(!e.isEmpty()){
             S s1 = nextSeq.head();
+            if (!ts.getStates().contains(s1))
+                throw new StateNotFoundException(s1);
             if (nextSeq.tail().isEmpty())
                 break;
+
             A a = nextSeq.tail().head();
+            if (!ts.getActions().contains(a))
+                throw new ActionNotFoundException(a);
             if (nextSeq.tail().tail().isEmpty())
                 return false;
+
             S s2 = nextSeq.tail().tail().head();
+            if (!ts.getStates().contains(s2))
+                throw new StateNotFoundException(s2);
             if(!ts.getTransitions().contains(new TSTransition<>(s1,a,s2))){
                 return false;
             }
@@ -213,7 +235,7 @@ public class FvmFacade {
             throw new StateNotFoundException(s);
         Set<S> set= new HashSet<>();
         for (TSTransition<S,?> trans : ts.getTransitions()){
-            if(trans.getFrom() == s){
+            if(trans.getFrom().equals(s)){
                 set.add(trans.getTo());
             }
         }
@@ -254,7 +276,7 @@ public class FvmFacade {
             throw new StateNotFoundException(s);
         Set<S> set= new HashSet<>();
         for (TSTransition<S,?> trans : ts.getTransitions()){
-            if(trans.getFrom() == s && trans.getAction() == a){
+            if(trans.getFrom().equals(s) && trans.getAction().equals(a)){
                 set.add(trans.getTo());
             }
         }
@@ -292,7 +314,7 @@ public class FvmFacade {
             throw new StateNotFoundException(s);
         Set<S> set= new HashSet<>();
         for (TSTransition<S,?> trans : ts.getTransitions()){
-            if(trans.getTo() == s){
+            if(trans.getTo().equals(s)){
                 set.add(trans.getFrom());
             }
         }
@@ -333,7 +355,7 @@ public class FvmFacade {
             throw new StateNotFoundException(s);
         Set<S> set= new HashSet<>();
         for (TSTransition<S,?> trans : ts.getTransitions()){
-            if(trans.getTo() == s && trans.getAction() == a ){
+            if(trans.getTo().equals(s) && trans.getAction().equals(a) ){
                 set.add(trans.getFrom());
             }
         }
@@ -507,7 +529,7 @@ public class FvmFacade {
         for( TSTransition trans : ts1.getTransitions()) {
             if (handShakingActions.contains(trans.getAction())) {
                 for (TSTransition trans2 : ts2.getTransitions()) {
-                    if( trans2.getAction() == trans.getAction()) {
+                    if( trans2.getAction().equals(trans.getAction())) {
                         newTs.addTransition(
                                 new TSTransition(
                                         Pair.pair(trans.getFrom(), trans2.getFrom()),
@@ -623,6 +645,18 @@ public class FvmFacade {
         return newPg;
     }
 
+    private Boolean trueOrFalse(int i){
+        if(i == 0)
+            return false;
+        return true;
+    }
+    private Boolean isZeroReg( Map<String, Boolean> regs){
+        for(String key : regs.keySet()){
+            if(regs.get(key))
+                return false;
+        }
+        return true;
+    }
     /**
      * Creates a {@link TransitionSystem} representing the passed circuit.
      *
@@ -634,21 +668,21 @@ public class FvmFacade {
         TransitionSystem<Pair<Map<String, Boolean>, Map<String, Boolean>>, Map<String, Boolean>, Object> ts = new TransitionSystem();
 
         List<Map<String, Boolean>> listInputMap = new LinkedList<>();
-        String[] inputsNames = (String[])c.getInputPortNames().toArray();
-        for(int i = 0 ; i < Math.pow(inputsNames.length,2) ; i++ ){
+        String[] inputsNames = c.getInputPortNames().toArray(new String[c.getInputPortNames().size()]);
+        for(int i = 0 ; i < Math.pow(2, inputsNames.length) ; i++ ){
             Map map = new HashMap();
             for(int j = 1 ; j <= inputsNames.length ; j++){
-                map.put(inputsNames[j-1],(i/j)%2);
+                map.put(inputsNames[j-1],trueOrFalse((i/j)%2));
             }
             listInputMap.add(map);
         }
 
         List<Map<String, Boolean>> listRegMap = new LinkedList<>();
-        String[] regsNames = (String[])c.getRegisterNames().toArray();
-        for(int i = 0 ; i < Math.pow(regsNames.length,2) ; i++ ){
+        String[] regsNames = c.getRegisterNames().toArray(new String[c.getRegisterNames().size()]);
+        for(int i = 0 ; i < Math.pow(2, regsNames.length) ; i++ ){
             Map map = new HashMap();
             for(int j = 1 ; j <= regsNames.length ; j++){
-                map.put(regsNames[j-1],(i/j)%2);
+                map.put(regsNames[j-1],trueOrFalse((i/j)%2));
             }
             listRegMap.add(map);
         }
@@ -656,13 +690,31 @@ public class FvmFacade {
         for(Map m1 : listInputMap){
             for(Map m2 : listRegMap){
                 ts.addState(Pair.pair(m1,m2));
+                if(isZeroReg(m2)){
+                    ts.addInitialState(Pair.pair(m1,m2));
+                }
             }
         }
 
         for(Pair<Map<String, Boolean>, Map<String, Boolean>> p : ts.getStates()){
-            ts.addToLabel(p,new Pair(p,c.computeOutputs(p.first,p.second)));
+            for(String input: p.first.keySet()){
+                if(p.first.get(input)) {
+                    ts.addToLabel(p, input);
+                }
+            }
+            for(String reg: p.second.keySet()){
+                if(p.second.get(reg)) {
+                    ts.addToLabel(p, reg);
+                }
+            }
+            Map<String, Boolean> outputs = c.computeOutputs(p.first,p.second);
+            for(String output: outputs.keySet()){
+                if(outputs.get(output)) {
+                    ts.addToLabel(p, output);
+                }
+            }
             Map newReg = c.updateRegisters(p.first, p.second);
-            for( Map inputs :listRegMap){
+            for( Map inputs :listInputMap){
                 ts.addTransitionFrom(p).action(inputs).to(new Pair(inputs, newReg));
             }
         }
@@ -709,14 +761,16 @@ public class FvmFacade {
             //TODO- may be add labels
             for (PGTransition<L,A> trans : pg.getTransitions()){
                 if(trans.getFrom().equals(st.first) && ConditionDef.evaluate(conditionDefs, st.second, trans.getCondition())) {
+                    Map<String, Object> effect = ActionDef.effect(actionDefs,st.second, trans.getAction());
+                    if(effect != null) {
+                        Pair<L, Map<String, Object>> newSt = new Pair(trans.getTo(), ActionDef.effect(actionDefs, st.second, trans.getAction()));
+                        conditions.add(trans.getCondition());
+                        if (!ts.getStates().contains(newSt)) {
+                            queue.add(newSt);
+                        }
 
-                    Pair<L, Map<String, Object>> newSt = new Pair(trans.getTo() , ActionDef.effect(actionDefs,st.second, trans.getAction()));
-                    conditions.add(trans.getCondition());
-                    if(!ts.getStates().contains(newSt)) {
-                        queue.add(newSt);
+                        ts.addTransitionFrom(st).action(trans.getAction()).to(newSt);
                     }
-
-                    ts.addTransitionFrom(st).action(trans.getAction()).to(newSt);
                 }
             }
         }
@@ -726,6 +780,7 @@ public class FvmFacade {
             for(String cond : conditions) {
                 if( ConditionDef.evaluate(conditionDefs, state.second, cond)) {
                     ts.addToLabel(state, cond);
+                    ts.addToLabel(state, state.first.toString());
                 }
             }
         }
@@ -888,9 +943,9 @@ public class FvmFacade {
 
     private String mergeConds(String cond1, String cond2) {
         if (cond1.length() == 0)
-            return cond1;
-        if (cond2.length() == 0)
             return cond2;
+        if (cond2.length() == 0)
+            return cond1;
         return "(" + cond1 + ") && (" + cond2 + ")";
     }
 
@@ -904,6 +959,14 @@ public class FvmFacade {
      */
     public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(
             ChannelSystem<L, A> cs) {
+        Set<ActionDef> actions = Collections.singleton(new ParserBasedActDef());
+        Set<ConditionDef> conditions = Collections.singleton(new ParserBasedCondDef());
+
+        return transitionSystemFromChannelSystem(cs, actions, conditions);
+    }
+
+    public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(
+         ChannelSystem<L, A> cs, Set<ActionDef> actions, Set<ConditionDef> conditions) {
 
         ProgramGraph<List<L>, A> bigPg = createBigPgFromPg(cs.getProgramGraphs().get(0));
 
@@ -911,15 +974,9 @@ public class FvmFacade {
             bigPg = mergeBigPgToSmallPg(bigPg, cs.getProgramGraphs().get(i));
         }
 
-        Set<ActionDef> actionDefs = new HashSet<>();
-        Set<ConditionDef> conditionDefs = new HashSet<>();
-
-        actionDefs.add(new ParserBasedInterleavingActDef());
-        actionDefs.add(new ParserBasedActDef());
-        conditionDefs.add(new ParserBasedCondDef());
-
-        return transitionSystemFromProgramGraph(bigPg, actionDefs, conditionDefs);
+        return transitionSystemFromProgramGraph(bigPg, actions, conditions);
     }
+
     /**
      * Construct a program graph from nanopromela code.
      *
