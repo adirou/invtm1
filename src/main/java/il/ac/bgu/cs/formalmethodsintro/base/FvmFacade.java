@@ -6,14 +6,12 @@ import java.util.*;
 import il.ac.bgu.cs.formalmethodsintro.base.automata.Automaton;
 import il.ac.bgu.cs.formalmethodsintro.base.automata.MultiColorAutomaton;
 import il.ac.bgu.cs.formalmethodsintro.base.channelsystem.ChannelSystem;
+import il.ac.bgu.cs.formalmethodsintro.base.channelsystem.ParserBasedInterleavingActDef;
 import il.ac.bgu.cs.formalmethodsintro.base.circuits.Circuit;
 import il.ac.bgu.cs.formalmethodsintro.base.exceptions.StateNotFoundException;
 import il.ac.bgu.cs.formalmethodsintro.base.ltl.LTL;
 import il.ac.bgu.cs.formalmethodsintro.base.nanopromela.NanoPromelaParser;
-import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ActionDef;
-import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ConditionDef;
-import il.ac.bgu.cs.formalmethodsintro.base.programgraph.PGTransition;
-import il.ac.bgu.cs.formalmethodsintro.base.programgraph.ProgramGraph;
+import il.ac.bgu.cs.formalmethodsintro.base.programgraph.*;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.AlternatingSequence;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TSTransition;
 import il.ac.bgu.cs.formalmethodsintro.base.transitionsystem.TransitionSystem;
@@ -615,7 +613,7 @@ public class FvmFacade {
         //TODO check if that's the meaning
         for (List<String> init1 : pg1.getInitalizations()){
             for (List<String> init2 : pg2.getInitalizations()){
-                List newList = List.copyOf(init1);
+                List newList = new LinkedList<>(init1);
                 newList.addAll(init2);
                 newPg.addInitalization(newList);
             }
@@ -688,15 +686,20 @@ public class FvmFacade {
             ProgramGraph<L, A> pg, Set<ActionDef> actionDefs, Set<ConditionDef> conditionDefs) {
         TransitionSystem<Pair<L, Map<String, Object>>, A, String> ts = new TransitionSystem();
         for( L l0: pg.getInitialLocations()){
-            for ( List<String> initilize: pg.getInitalizations() ) {
-                Map env = new HashMap<>();
+            if(!pg.getInitalizations().isEmpty()){
+                for ( List<String> initilize: pg.getInitalizations() ) {
+                    Map env = new HashMap<>();
 
-                for(String s : initilize ){
-                    env = ActionDef.effect(actionDefs, env, s);
+                    for(String s : initilize ){
+                        env = ActionDef.effect(actionDefs, env, s);
+                    }
+                    ts.addInitialState(new Pair(l0,env));
                 }
-                ts.addInitialState(new Pair(l0,env));
+            }else {
+                ts.addInitialState(new Pair(l0, new HashMap<>()));
             }
         }
+        LinkedList<String> conditions = new LinkedList<>();
 
         LinkedList<Pair<L, Map<String, Object>>> queue = new LinkedList();
         queue.addAll(ts.getInitialStates());
@@ -705,9 +708,10 @@ public class FvmFacade {
             Pair<L, Map<String, Object>> st  = queue.removeFirst();
             //TODO- may be add labels
             for (PGTransition<L,A> trans : pg.getTransitions()){
-                if(trans.getFrom() == st.first && ConditionDef.evaluate(conditionDefs, st.second,trans.getCondition())) {
-                    Pair<L, Map<String, Object>> newSt = new Pair(trans.getTo() , ActionDef.effect(actionDefs,st.second, trans.getAction()));
+                if(trans.getFrom().equals(st.first) && ConditionDef.evaluate(conditionDefs, st.second, trans.getCondition())) {
 
+                    Pair<L, Map<String, Object>> newSt = new Pair(trans.getTo() , ActionDef.effect(actionDefs,st.second, trans.getAction()));
+                    conditions.add(trans.getCondition());
                     if(!ts.getStates().contains(newSt)) {
                         queue.add(newSt);
                     }
@@ -717,8 +721,177 @@ public class FvmFacade {
             }
         }
 
-      return ts;
+        // labeling
+        for (Pair<L, Map<String, Object>> state : ts.getStates()) {
+            for(String cond : conditions) {
+                if( ConditionDef.evaluate(conditionDefs, state.second, cond)) {
+                    ts.addToLabel(state, cond);
+                }
+            }
+        }
 
+
+        return ts;
+
+    }
+
+
+
+    private <L,A> ProgramGraph<List<L>,A> createBigPgFromPg (ProgramGraph<L, A> pg){
+        ProgramGraph<List<L>,A> bigPg = new ProgramGraph<>();
+        for (L loc : pg.getLocations()){
+            List<L> bigLoc = new LinkedList<>();
+            bigLoc.add(loc);
+            if (pg.getInitialLocations().contains(loc)){
+                bigPg.setInitial(bigLoc, true);
+            }
+            bigPg.addLocation(bigLoc);
+        }
+
+        for (PGTransition<L,A> trans : pg.getTransitions()){
+            PGTransition<List<L>, A> bigNewTrans = new PGTransition<>(
+                    Arrays.asList(trans.getFrom()),
+                    trans.getCondition() ,
+                    trans.getAction(),
+                    Arrays.asList(trans.getTo()));
+            bigPg.addTransition(bigNewTrans);
+        }
+
+        // initializations
+        for (List<String> inits : pg.getInitalizations()) {
+            bigPg.addInitalization(inits);
+        }
+        return  bigPg;
+    }
+
+    private <L,A>  ProgramGraph<List<L>,A> mergeBigPgToSmallPg (ProgramGraph<List<L>,A> bPg, ProgramGraph<L, A> pg){
+
+        ProgramGraph<List<L>,A> newBigPg = new ProgramGraph<>();
+
+        Set<List<L>> locations = bPg.getLocations();
+
+        for (List<L> locList : locations) {
+            for (L loc : pg.getLocations()) {
+                List<L> clonedList = new LinkedList<>(locList);
+                clonedList.add(loc);
+
+                if (pg.getInitialLocations().contains(loc) && bPg.getInitialLocations().contains(locList)) {
+                    newBigPg.setInitial(clonedList, true);
+                }
+
+                newBigPg.addLocation(clonedList);
+            }
+        }
+
+        // trans
+        ParserBasedInterleavingActDef parser = new ParserBasedInterleavingActDef();
+
+        List<PGTransition<List<L>,A>> oneSideTransBig = new LinkedList<>();
+        List<PGTransition<L,A>> oneSideTrans = new LinkedList<>();
+        //left side
+        for (PGTransition<List<L>, A> trans : bPg.getTransitions()) {
+            if (!parser.isOneSidedAction(trans.getAction().toString())) {
+                for (L loc : pg.getLocations()) {
+                    List<L> from = new LinkedList<>(trans.getFrom());
+                    List<L> to = new LinkedList<>(trans.getTo());
+                    from.add(loc);
+                    to.add(loc);
+                    PGTransition<List<L>, A> newBigTran = new PGTransition<>(
+                            from, trans.getCondition(), trans.getAction(), to);
+                    newBigPg.addTransition(newBigTran);
+                }
+            }
+            else {
+                oneSideTransBig.add(trans);
+            }
+        }
+
+        //right side
+        for (PGTransition<L, A> trans : pg.getTransitions()) {
+            if (!parser.isOneSidedAction(trans.getAction().toString())) {
+                for (List<L> loc : bPg.getLocations()) {
+
+                    List<L> ClonedFrom = new LinkedList<>(loc);
+                    List<L> ClonedTo = new LinkedList<>(loc);
+
+                    ClonedFrom.add(trans.getFrom());
+                    ClonedTo.add(trans.getTo());
+                    PGTransition<List<L>, A> newTran = new PGTransition<>(
+                            ClonedFrom, trans.getCondition(), trans.getAction(), ClonedTo);
+                    newBigPg.addTransition(newTran);
+                }
+            }
+            else {
+                oneSideTrans.add(trans);
+            }
+        }
+
+        //handshake
+        for (PGTransition<List<L>, A> bigTran : oneSideTransBig) {
+            for (PGTransition<L, A> tran : oneSideTrans) {
+                A act = getHandShakeAction(bigTran.getAction(), tran.getAction());
+                if( act != null) {
+                    List<L> from = new LinkedList(bigTran.getFrom());
+                    List<L> to = new LinkedList(bigTran.getTo());
+                    from.add(tran.getFrom());
+                    to.add(tran.getTo());
+                    PGTransition<List<L>, A> newTran = new PGTransition<>(
+                            from, mergeConds(bigTran.getCondition(), tran.getCondition()), act, to);
+                    newBigPg.addTransition(newTran);
+                }
+            }
+        }
+
+        //initialization
+        for (List<String> bigInit : bPg.getInitalizations()) {
+            for (List<String> init : pg.getInitalizations()) {
+                List<String> newInit = new ArrayList<>(bigInit);
+                newInit.addAll(init);
+                newBigPg.addInitalization(newInit);
+            }
+        }
+
+        if (bPg.getInitalizations().isEmpty()){
+            for (List<String> init : pg.getInitalizations()){
+                newBigPg.addInitalization(init);
+            }
+        }
+
+        if (pg.getInitalizations().isEmpty()){
+            for (List<String> init : bPg.getInitalizations()){
+                newBigPg.addInitalization(init);
+            }
+        }
+
+        return newBigPg;
+    }
+
+
+    private <A> A getHandShakeAction(A leftAction, A rightAction) {
+        if (!(leftAction instanceof String && rightAction instanceof String))
+            return null;
+
+        String[][] acceptable = {{"?","!"} , {"!","?"}};
+
+        for (int i = 0; i < 2 ; i++){
+            if (((String)leftAction).contains(acceptable[i][0]) &&
+                    ((String)rightAction).contains(acceptable[i][1])){
+                String chanelNameLeft = ((String) leftAction).substring(0, ((String) leftAction).indexOf(acceptable[i][0]));
+                String chanelNameRight = ((String)rightAction).substring(0, ((String) rightAction).indexOf(acceptable[i][1]));
+                if(chanelNameRight.equals(chanelNameLeft))
+                    return (A)(leftAction+"|"+rightAction);
+            }
+        }
+
+        return null;
+    }
+
+    private String mergeConds(String cond1, String cond2) {
+        if (cond1.length() == 0)
+            return cond1;
+        if (cond2.length() == 0)
+            return cond2;
+        return "(" + cond1 + ") && (" + cond2 + ")";
     }
 
     /**
@@ -731,9 +904,22 @@ public class FvmFacade {
      */
     public <L, A> TransitionSystem<Pair<List<L>, Map<String, Object>>, A, String> transitionSystemFromChannelSystem(
             ChannelSystem<L, A> cs) {
-        throw new java.lang.UnsupportedOperationException();
-    }
 
+        ProgramGraph<List<L>, A> bigPg = createBigPgFromPg(cs.getProgramGraphs().get(0));
+
+        for (int i = 1; i < cs.getProgramGraphs().size(); i++) {
+            bigPg = mergeBigPgToSmallPg(bigPg, cs.getProgramGraphs().get(i));
+        }
+
+        Set<ActionDef> actionDefs = new HashSet<>();
+        Set<ConditionDef> conditionDefs = new HashSet<>();
+
+        actionDefs.add(new ParserBasedInterleavingActDef());
+        actionDefs.add(new ParserBasedActDef());
+        conditionDefs.add(new ParserBasedCondDef());
+
+        return transitionSystemFromProgramGraph(bigPg, actionDefs, conditionDefs);
+    }
     /**
      * Construct a program graph from nanopromela code.
      *
